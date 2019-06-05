@@ -218,9 +218,9 @@ class _SpeciesMathable(object):
     def d(self, value):
         from . import rxd
         self._d = value
-        if initializer.is_initialized():
+        if initializer.is_initialized() and hasattr(self,'_region_indices'):
             _volumes, _surface_area, _diffs = node._get_data()
-            _diffs[self.indices()] = value
+            _diffs[self._indices1d()] = value
             rxd._setup_matrices()
         if hasattr(self, '_extracellular_instances'):
             for ecs in self._extracellular_instances.values():
