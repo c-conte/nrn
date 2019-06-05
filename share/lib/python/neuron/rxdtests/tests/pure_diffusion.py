@@ -20,7 +20,7 @@ dend.diam = 2
 dend.nseg = 101
 dend.L = 100
 
-diff_constant = 1
+diff_constant = 0
 
 r = rxd.Region(h.allsec())
 ca = rxd.Species(r, d=diff_constant, initial=lambda node:
@@ -28,8 +28,10 @@ ca = rxd.Species(r, d=diff_constant, initial=lambda node:
 
 h.finitialize()
 
+
 for t in [25, 50, 75, 100, 125]:
     h.continuerun(t)
+    ca.d += 1.0
     pyplot.plot([seg.x for seg in dend], ca.states)
 
 pyplot.tight_layout()
