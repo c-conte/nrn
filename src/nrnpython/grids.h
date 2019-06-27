@@ -207,6 +207,8 @@ typedef struct ECSAdiGridData{
 
 class ICS_Grid_node : public Grid_node{
     public:
+        //fractional volumes
+        double* _ics_alphas;
         //stores the positive x,y, and z neighbors for each node. [node0_x, node0_y, node0_z, node1_x ...]
         long* _neighbors;
 
@@ -252,7 +254,7 @@ class ICS_Grid_node : public Grid_node{
 };
 
 typedef struct ICSAdiDirection{
-    void (*ics_dg_adi_dir)(ICS_Grid_node* g, int, int, int, double, double*, double*, double*);
+    void (*ics_dg_adi_dir)(ICS_Grid_node* g, int, int, int, double, double*, double*, double*, double*, double*, double*);
     double* states_in;
     double* states_out;
     double* deltas;
@@ -274,6 +276,9 @@ typedef struct ICSAdiGridData{
     ICSAdiDirection* ics_adi_dir;
     double* scratchpad;
     double* RHS;
+    double* l_diag;
+    double* diag;
+    double* u_diag;
     //double* deltas;
 }ICSAdiGridData;
 
@@ -322,13 +327,13 @@ extern "C" int ECS_insert(int grid_list_index, PyHocObject* my_states, int my_nu
 Grid_node *ICS_make_Grid(PyHocObject* my_states, long num_nodes, long* neighbors, 
                 long* ordered_x_nodes, long* ordered_y_nodes, long* ordered_z_nodes,
                 long* x_line_defs, long x_lines_length, long* y_line_defs, long y_lines_length, long* z_line_defs,
-                long z_lines_length, double d, double dx, bool is_diffusable, double atolscale);
+                long z_lines_length, double d, double dx, bool is_diffusable, double atolscale, double* ics_alphas);
 
 // Insert an  ICS_Grid_node "new_Grid" into the list located at grid_list_index in Parallel_grids
 extern "C" int ICS_insert(int grid_list_index, PyHocObject* my_states, long num_nodes, long* neighbors,
                 long* ordered_x_nodes, long* ordered_y_nodes, long* ordered_z_nodes,
                 long* x_line_defs, long x_lines_length, long* y_line_defs, long y_lines_length, long* z_line_defs,
-                long z_lines_length, double d, double dx, bool is_diffusable, double atolscale);
+                long z_lines_length, double d, double dx, bool is_diffusable, double atolscale, double* ics_alphas);
 
 
 

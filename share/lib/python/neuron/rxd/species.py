@@ -49,7 +49,8 @@ ICS_insert.argtypes = [
     ctypes.c_double,
     ctypes.c_double,
     ctypes.c_bool,
-    ctypes.c_double,]
+    ctypes.c_double,
+    numpy.ctypeslib.ndpointer(dtype=float),]
 
 #function to change extracellular diffusion
 set_diffusion = nrn_dll_sym('set_diffusion')
@@ -526,11 +527,13 @@ class _IntracellularSpecies(_SpeciesMathable):
         self._ordered_y_nodes = self.ordered_nodes(self._y_line_defs, 'y', self.neighbors)
         self._ordered_z_nodes = self.ordered_nodes(self._z_line_defs, 'z', self.neighbors)
 
+        self._alphas = self.create_alphas()
+
         self._grid_id = ICS_insert(0, self._states._ref_x[0], len(self.states), self.neighbors,
                                     self._ordered_x_nodes, self._ordered_y_nodes, self._ordered_z_nodes,
                                     self._x_line_defs, len(self._x_line_defs), self._y_line_defs, 
                                     len(self._y_line_defs), self._z_line_defs, len(self._z_line_defs),
-                                    self._d, self._dx, is_diffusable, self._atolscale)
+                                    self._d, self._dx, is_diffusable, self._atolscale, self._alphas)
   
         self._update_pointers()
     
@@ -581,6 +584,10 @@ class _IntracellularSpecies(_SpeciesMathable):
             for i, ele in enumerate(n.neighbors[::2]):
                 my_array[n._index, i] = ele if ele is not None else -1
         return my_array
+    
+    def create_alphas(self):
+        alphas = [vol/self._dx**3 for vol in self._region._vol]
+        return numpy.asarray(alphas, dtype=numpy.float)
 
     def _import_concentration(self):
         ion = '_ref_' + self._name + self._region._nrn_region
