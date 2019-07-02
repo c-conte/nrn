@@ -160,6 +160,7 @@ class GeneralizedReaction(object):
         # locate the regions containing all species (including the one that changes)
         if all(sptr() for sptr in sources) and all(dptr() for dptr in dests):
             active_regions = [r for r in self._regions if all(sptr().indices(r) for sptr in sources + dests)]
+            print("active_regions = {}".format(active_regions))
         else:
             active_regions = []
         for sptr in self._involved_species:
@@ -190,7 +191,7 @@ class GeneralizedReaction(object):
                 if not dest_regions:
                     raise RxDException("Error in %r. The destination species do not share a common region" % self)
                 dest_sections = intersection([set(reg.secs) for reg in dest_regions if reg is not None])
-                active_regions = src_regions + dest_regions
+                active_regions = set.union(src_regions,dest_regions)
                 active_secs = set.union(src_sections,dest_sections)
             else:
                 active_regions = list(intersection([set(sptr()._regions) if isinstance(sptr(),species.Species) else {sptr()._region()} for sptr in sources + dests]))

@@ -53,7 +53,7 @@ def fullmorph(source, dx, soma_step=100):
 
     # grid setup
     xs, ys, zs, diams, arcs = [],[],[],[],[]
-    for sec in source:
+    for sec in h.allsec():
     	xs += [sec.x3d(i) for i in range(sec.n3d())]
     	ys += [sec.y3d(i) for i in range(sec.n3d())]
     	zs += [sec.z3d(i) for i in range(sec.n3d())]

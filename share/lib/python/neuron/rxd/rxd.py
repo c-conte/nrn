@@ -1214,6 +1214,8 @@ def _compile_reactions():
     nseg_by_region = []     # a list of the number of segments for each region
     # a table for location,species -> state index
     location_index = []
+    import pprint
+    pprint.pprint(regions_inv)
     regions_inv_1d = [reg for reg in regions_inv if reg._secs1d]
     regions_inv_1d.sort(key=lambda r: r._id)
     regions_inv_3d = [reg for reg in regions_inv if reg._secs3d]
@@ -1345,7 +1347,22 @@ def _compile_reactions():
             for rptr in [r for rlist in list(regions_inv.values()) for r in rlist]:
                 if not isinstance(rptr(), rate.Rate):
                     fxn_string += '\n\tdouble rate;'
-                    break
+                    break            
+            #if any rates on this region have SpeciesOnRegion, add their grid_ids
+            #do this in loop above if it is correct
+            for rptr in [r for rlist in list(regions_inv.values()) for r in rlist]:
+                r = rptr()
+                if isinstance(r, rate.Rate):
+                    if reg in r._regions:
+                        for spec_involved in r._involved_species:
+                            #probably should do parameters/states here as well
+                            if isinstance(spec_involved(), species.SpeciesOnRegion):
+                                all_ics_gids.add(spec_involved()._species()._intracellular_instances[spec_involved()._region()]._grid_id)
+                elif isinstance(r, multiCompartmentReaction.MultiCompartmentReaction):
+                    if reg in r._rate:
+                        for spec_involved in r._involved_species:
+                            all_ics_gids.add(spec_involved()._species()._intracellular_instances[spec_involved()._region()]._grid_id)                        
+
             for s in species_by_region[reg]:
                 spe = s._species() if isinstance(s,species.SpeciesOnRegion) else s
                 if hasattr(spe, '_intracellular_instances') and spe._intracellular_instances and reg in spe._intracellular_instances:
@@ -1360,7 +1377,7 @@ def _compile_reactions():
             ics_param_gids = list(ics_param_gids)
             for rptr in regions_inv[reg]:
                 r = rptr()
-                if isinstance(r,multiCompartmentReaction.MultiCompartmentReaction) or reg not in r._rate:
+                if reg not in r._rate:
                     continue
                 rate_str = re.sub(r'species_3d\[(\d+)\]',lambda m: "species_3d[%i]" % [pid for pid,gid in enumerate(all_ics_gids) if gid == int(m.groups()[0])][0], r._rate[reg][-1])
                 rate_str = re.sub(r'params_3d\[(\d+)\]',lambda m: "params_3d[%i]" %  [pid for pid, gid in enumerate(ics_param_gids) if gid == int(m.groups()[0])][0], rate_str)
@@ -1380,6 +1397,8 @@ def _compile_reactions():
                         ics_grid_ids.append(s._grid_id)
                     pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s._grid_id][0]
                     fxn_string += "\n\trhs[%d] %s %s;" % (pid, operator, rate_str)
+                elif isinstance(r, multiCompartmentReaction.MultiCompartmentReaction):
+                    pass
                 else:
                     idx=0
                     fxn_string += "\n\trate = %s;" %  rate_str
