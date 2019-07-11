@@ -155,14 +155,15 @@ class MultiCompartmentReaction(GeneralizedReaction):
 
         self._changing_species = list(set(self._sources + self._dests))
         
-        regs = []
-        for sptr in self._changing_species:
-            if isinstance(sptr(), species.Species):
-                raise RxDException('must specify region for all involved species')
-            elif hasattr(sptr(),'_extracellular'):
-                regs.append(sptr()._extracellular()._region)
-            else:
-                regs.append(sptr()._region())
+        mem = self._regions[0]
+        regs = [mem]
+        #for sptr in self._changing_species:
+        #    if isinstance(sptr(), species.Species):
+        #        raise RxDException('must specify region for all involved species')
+        #    elif hasattr(sptr(),'_extracellular'):
+        #        regs.append(sptr()._extracellular()._region)
+        #    else:
+        #        regs.append(sptr()._region())
         self._rate, self._involved_species = rxdmath._compile(rate, regs)
 
     @property

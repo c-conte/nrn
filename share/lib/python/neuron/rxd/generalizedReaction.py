@@ -159,15 +159,16 @@ class GeneralizedReaction(object):
 
         # locate the regions containing all species (including the one that changes)
         if all(sptr() for sptr in sources) and all(dptr() for dptr in dests):
-            active_regions = [r for r in self._regions if all(sptr().indices(r) for sptr in sources + dests)]
-            print("active_regions = {}".format(active_regions))
+            #active_regions = [r for r in self._regions if all(sptr().indices(r) for sptr in sources + dests)]
+            active_regions = [r for r in self._regions if all(sptr().defined_on_region(r) for sptr in sources + dests)]
+
         else:
             active_regions = []
         for sptr in self._involved_species:
             s = sptr()
             if s and not isinstance(s,species.SpeciesOnExtracellular):
                 for r in self._regions:
-                    if r in active_regions and not s.indices(r):
+                    if r in active_regions and not s.defined_on_region(r):
                         del active_regions[active_regions.index(r)]
             elif s and isinstance(s,species.SpeciesOnExtracellular):
                 r = s._extracellular()

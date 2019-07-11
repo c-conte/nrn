@@ -1214,11 +1214,12 @@ def _compile_reactions():
     nseg_by_region = []     # a list of the number of segments for each region
     # a table for location,species -> state index
     location_index = []
-    import pprint
-    pprint.pprint(regions_inv)
+
     regions_inv_1d = [reg for reg in regions_inv if reg._secs1d]
     regions_inv_1d.sort(key=lambda r: r._id)
     regions_inv_3d = [reg for reg in regions_inv if reg._secs3d]
+    #remove extra regions from multicompartment reactions. We only want the membrane
+
     for reg in regions_inv_1d:
         rptr = weakref.ref(reg)
         for c_region in region._c_region_lookup[rptr]:
@@ -1325,6 +1326,7 @@ def _compile_reactions():
                             species_ids_used[idx][region_id] = True
                             fxn_string += "\n\trhs[%d][%d] %s (%g) * rate;" % (idx, region_id, operator, summed_mults[idx])
             fxn_string += "\n}\n"
+            print(fxn_string)
             register_rate(creg.num_species, creg.num_params, creg.num_regions,
                           creg.num_segments, creg.get_state_index(),
                           creg.num_ecs_species, creg.num_ecs_params,
@@ -1341,12 +1343,10 @@ def _compile_reactions():
             all_ics_gids = set()
             ics_param_gids = set()
             fxn_string = _c_headers
-            if all([isinstance(r(), multiCompartmentReaction.MultiCompartmentReaction) for rlist in list(regions_inv.values()) for r in rlist]):
-                break
             fxn_string += 'void reaction(double* species_3d, double* params_3d, double*rhs)\n{'
             for rptr in [r for rlist in list(regions_inv.values()) for r in rlist]:
                 if not isinstance(rptr(), rate.Rate):
-                    fxn_string += '\n\tdouble rate;'
+                    fxn_string += '\n\tdouble rate;\n'
                     break            
             #if any rates on this region have SpeciesOnRegion, add their grid_ids
             #do this in loop above if it is correct
@@ -1360,7 +1360,7 @@ def _compile_reactions():
                                 all_ics_gids.add(spec_involved()._species()._intracellular_instances[spec_involved()._region()]._grid_id)
                 elif isinstance(r, multiCompartmentReaction.MultiCompartmentReaction):
                     if reg in r._rate:
-                        for spec_involved in r._involved_species:
+                        for spec_involved in r._involved_species + r._sources + r._dests:
                             all_ics_gids.add(spec_involved()._species()._intracellular_instances[spec_involved()._region()]._grid_id)                        
 
             for s in species_by_region[reg]:
@@ -1398,7 +1398,20 @@ def _compile_reactions():
                     pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s._grid_id][0]
                     fxn_string += "\n\trhs[%d] %s %s;" % (pid, operator, rate_str)
                 elif isinstance(r, multiCompartmentReaction.MultiCompartmentReaction):
-                    pass
+                    if reg in r._regions:
+                        fxn_string += 'rate = ' + rate_str + ";\n"
+                        for sptr in r._sources + r._dests:
+                            s = sptr()
+                            if not isinstance(s, species.Parameter) and not isinstance(s, species.ParameterOnRegion):
+                                s = s.instance3d
+                                if s._grid_id in ics_grid_ids:
+                                    operator = '+='
+                                else:
+                                    operator = '='
+                                    ics_grid_ids.append(s._grid_id)
+                                pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s._grid_id][0]
+                                fxn_string += "\n\trhs[%d] %s rate;" % (pid, operator)
+
                 else:
                     idx=0
                     fxn_string += "\n\trate = %s;" %  rate_str
@@ -1424,6 +1437,7 @@ def _compile_reactions():
                         fxn_string += "\n\trhs[%d] %s (%s)*rate;" % (pid, operator, r._mult[idx])
                         idx += 1
             fxn_string += "\n}\n"
+            print(fxn_string)
             ecs_register_reaction(0, len(all_ics_gids), len(ics_param_gids), _list_to_cint_array(all_ics_gids + ics_param_gids), _c_compile(fxn_string))                 
     #Setup extracellular reactions
     if len(ecs_regions_inv) > 0:

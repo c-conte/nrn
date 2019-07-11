@@ -453,6 +453,19 @@ class SpeciesOnRegion(_SpeciesMathable):
         else:
             raise RxDException('There are no 1D sections defined on {}'.format(reg))
 
+    def defined_on_region(self, r):
+        return r == self._region()
+
+    @property
+    def instance3d(self):
+        sp = self._species()
+        r = self._region()
+        if r in sp._intracellular_instances:
+            return sp._intracellular_instances[r]
+        else:
+            raise RxDException("There are no 3D species defined on {}".format(reg))
+        
+
     @property
     def _id(self):
         return self._species()._id
@@ -1367,7 +1380,10 @@ class Species(_SpeciesMathable):
             else:   #Find the intersection
                 interseg = set.intersection(*[set(reg.secs) for reg in r if reg is not None])
                 return self.indices(r,interseg)
-    
+
+    def defined_on_region(self, r):
+        return r in self._regions or r in self._extracellular_regions
+        
     def _setup_diffusion_matrix(self, g):
         for s in self._secs:
             s._setup_diffusion_matrix(g)

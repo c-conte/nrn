@@ -195,6 +195,8 @@ def fullmorph(source, dx, soma_step=100):
         print("{} objects have inaccurate voxelization, probably due to resolution errors.".format(missed))
         print("Missed voxels total: ", len(missed_voxels))
     """
+    total_time = time.time() - start
+    print("total time for dx {} was {} seconds".format(dx, total_time))
     return final_intern_voxels, final_surface_voxels, grid
 
 
