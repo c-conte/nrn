@@ -91,7 +91,7 @@ typedef struct Reaction {
 	double** species_states;
 	unsigned char* subregion;
 	unsigned int region_size;
-    int** mc3d_indices;
+    int* mc3d_indices_offsets;
 } Reaction;
 
 typedef struct {

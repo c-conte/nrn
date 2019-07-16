@@ -159,14 +159,15 @@ class GeneralizedReaction(object):
 
         # locate the regions containing all species (including the one that changes)
         if all(sptr() for sptr in sources) and all(dptr() for dptr in dests):
-            #active_regions = [r for r in self._regions if all(sptr().indices(r) for sptr in sources + dests)]
-            active_regions = [r for r in self._regions if all(sptr().defined_on_region(r) for sptr in sources + dests)]
+            active_regions = [r for r in self._regions if all(sptr().defined_on_region(r) for sptr in sources + dests if (not isinstance(sptr(), species.SpeciesOnRegion)))]
 
         else:
             active_regions = []
         for sptr in self._involved_species:
             s = sptr()
             if s and not isinstance(s,species.SpeciesOnExtracellular):
+                if isinstance(s, species.SpeciesOnRegion):
+                    continue
                 for r in self._regions:
                     if r in active_regions and not s.defined_on_region(r):
                         del active_regions[active_regions.index(r)]
@@ -176,7 +177,7 @@ class GeneralizedReaction(object):
                     del active_regions[active_regions.index(r)] 
             else:
                 active_regions = []
-        
+
         def intersection(los):
             if los: return set.intersection(*los)
             return None

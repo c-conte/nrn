@@ -98,10 +98,8 @@ void clear_rates_ecs(void)
  * ECSReactionRate - the reaction function
  * subregion - either NULL or a boolean array the same size as the grid
  * 	indicating if reaction occurs at a specific voxel
- * 
- * mc_indices - either NULL or an array containing indices that map to the grids states array ** May want to reconsider this
  */
-Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int* species_ids, ECSReactionRate f, unsigned char* subregion, int* mc3d_indices, int mc_3d_size)
+Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int* species_ids, ECSReactionRate f, unsigned char* subregion, int* mc3d_start_indices, int mc3d_region_size)
 {
 	Grid_node *grid;
 	Reaction* r;
@@ -118,23 +116,27 @@ Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int
 	{
 		/* Assume all species have the same grid */ 
 		if(i==species_ids[0])
-		{   
-            //Multicompartment 3D reactions do not have the same grid but the size of the indices will be the same so we just need to find the first grid in the reaction
-            if(mc3d_indices != NULL)
+		{
+            if (mc3d_region_size > 0)
             {
                 r->subregion = NULL;
-                r->region_size = mc_3d_size; 
+                r->region_size = mc3d_region_size;
+                //Do we really need to allocate a whole Grid_node* here?
+                r->mc3d_indices_offsets = (int*)malloc(sizeof(int*)*(num_species+num_params));
+                memcpy(r->mc3d_indices_offsets, mc3d_start_indices, sizeof(double)*(num_species+num_params));          
             }
 			else if(subregion == NULL)
 			{
 				r->subregion = NULL;
 				r->region_size = grid->size_x * grid->size_y * grid->size_z;
+                r->mc3d_indices_offsets = NULL;
 			}
 			else
 			{
 				for(r->region_size=0, j=0; j < grid->size_x * grid->size_y * grid->size_z; j++)
 					r->region_size += subregion[j];
 				r->subregion = subregion;
+                r->mc3d_indices_offsets = NULL;
 			}	
 		}	
 	}
@@ -142,15 +144,6 @@ Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int
 	r->num_species_involved = num_species;
     r->num_params_involved = num_params;
 	r->species_states = (double**)malloc(sizeof(Grid_node*)*(num_species + num_params));
-
-    if(mc3d_indices)
-    {
-        //Do we really need to allocate a whole Grid_node* here?
-        r->mc3d_indices = (int**)malloc(sizeof(Grid_node*)*(num_species + num_params));
-        //need this?
-        assert(r->mc3d_indices);
-
-    }
 	assert(r->species_states);
 
 	for(i = 0; i < num_species + num_params; i++)
@@ -161,11 +154,8 @@ Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int
 		{
 			if(j==species_ids[i])
 				r->species_states[i] = grid->states;
-                if(mc3d_indices)
-                {
-                    r->mc3d_indices[i] = mc3d_indices;
-                }
 		}
+        //printf("mc3d_indices_offsets[%d] = %d\n",i, r->mc3d_indices_offsets[i]);
 	}
 	
 	return r;
@@ -177,9 +167,10 @@ Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int
  * grid_id - the grid id within the linked list - this corresponds to species
  * ECSReactionRate - the reaction function
  */
-extern "C" void ecs_register_reaction(int list_idx, int num_species, int num_params, int* species_id, ECSReactionRate f)
+extern "C" void ecs_register_reaction(int list_idx, int num_species, int num_params, int* species_id, int* mc3d_start_indices, int mc3d_region_size, ECSReactionRate f)
 {
-	ecs_create_reaction(list_idx, num_species, num_params, species_id, f, NULL, NULL, 0);
+    printf("mc3d_region_size = %d\n", mc3d_region_size);
+	ecs_create_reaction(list_idx, num_species, num_params, species_id, f, NULL, mc3d_start_indices, mc3d_region_size);
 	ecs_refresh_reactions(NUM_THREADS);
 }
 
@@ -263,7 +254,7 @@ void* ecs_do_reactions(void* dataptr)
 {
 	ReactGridData task = *(ReactGridData*)dataptr;
 	unsigned char started = FALSE, stop = FALSE;
-	int i, j, k, n, start_idx, stop_idx;
+	int i, j, k, n, start_idx, stop_idx, offset_idx;
     double temp, ge_value, val_to_set;
 	double dt = *dt_ptr;
 	Reaction* react;
@@ -282,9 +273,157 @@ void* ecs_do_reactions(void* dataptr)
 
 	for(react = ecs_reactions; react != NULL; react = react -> next)
 	{
-        if (react->mc3d_indices != NULL)
+        //TODO: This is bad. Need to refactor
+        if (react->mc3d_indices_offsets != NULL)
         {
             //do below code but grabbing the correct indices is there a better way to do this? Could make them into classes but might be more trouble than it's worth
+            /*find start location for this thread*/
+            if(started || react == task.onset->reaction)
+            {
+                if(!started)
+                {
+                    started = TRUE;
+                    start_idx = task.onset->idx;
+                }
+                else
+                {
+                    start_idx = 0;
+                }
+
+                if(task.offset->reaction == react)
+                {
+                    stop_idx = task.offset->idx;
+                    stop = TRUE;
+                }
+                else
+                {
+                    stop_idx = react->region_size-1;
+                    stop = FALSE;
+                }
+                if(react->num_species_involved == 0)
+                    continue;
+                /*allocate data structures*/
+                jacobian = m_get(react->num_species_involved,react->num_species_involved);
+                b = v_get(react->num_species_involved);
+                x = v_get(react->num_species_involved);
+                pivot = px_get(jacobian->m);
+                states_cache = (double*)malloc(sizeof(double)*react->num_species_involved);
+                params_cache = (double*)malloc(sizeof(double)*react->num_params_involved);
+                states_cache_dx = (double*)malloc(sizeof(double)*react->num_species_involved);
+                results_array = (double*)malloc(react->num_species_involved*sizeof(double));
+                results_array_dx = (double*)malloc(react->num_species_involved*sizeof(double));
+                for(i = start_idx; i <= stop_idx; i++)
+                {
+                    if(!react->subregion || react->subregion[i])
+                    {
+                        //TODO: this assumes grids are the same size/shape 
+                        //      add interpolation in case they aren't      
+                        for(j = 0; j < react->num_species_involved; j++)
+                        {
+                            offset_idx = i + react->mc3d_indices_offsets[j];
+                            states_cache[j] = react->species_states[j][offset_idx];
+                            states_cache_dx[j] = react->species_states[j][offset_idx];
+                        }
+                        MEM_ZERO(results_array,react->num_species_involved*sizeof(double));
+                        for(k = 0; j < react->num_species_involved + react->num_params_involved; k++, j++)
+                        {
+                            offset_idx = i + react->mc3d_indices_offsets[j];
+                            params_cache[k] = react->species_states[j][offset_idx];
+                        }
+                        react->reaction(states_cache, params_cache, results_array);
+
+                        for(j = 0; j < react->num_species_involved; j++)
+                        {
+                            states_cache_dx[j] += dx;
+                            MEM_ZERO(results_array_dx,react->num_species_involved*sizeof(double));
+                            react->reaction(states_cache_dx, params_cache, results_array_dx);
+                            v_set_val(b, j, dt*results_array[j]);
+
+                            for(k = 0; k < react->num_species_involved; k++)
+                            {
+                                pd = (results_array_dx[k] - results_array[k])/dx;
+                                m_set_val(jacobian, k, j, (j==k) - dt*pd);
+                            }
+                            states_cache_dx[j] -= dx;
+                        }
+                        // solve for x
+                        if (react->num_species_involved == 1)
+                        {
+                            react->species_states[0][i] += v_get_val(b, 0) / m_get_val(jacobian, 0, 0);
+                        }
+                        else
+                        {
+                            //find entry in leftmost column with largest absolute value
+                            //Pivot
+                            for (j = 0; j < react->num_species_involved; j++)
+                            {
+                                for(k = j + 1; k < react->num_species_involved; k++)
+                                {
+                                    if (abs(m_get_val(jacobian, j, j)) < abs(m_get_val(jacobian, k, j)))
+                                    {
+                                        for (n = 0; n < react->num_species_involved; n++)
+                                        {
+                                            temp = m_get_val(jacobian, j, n);
+                                            m_set_val(jacobian, j, n, m_get_val(jacobian, k, n));
+                                            m_set_val(jacobian, k, n, temp);
+                                        }
+                                    }
+                                }
+                            }
+
+                            for (j = 0; j < react->num_species_involved - 1; j ++)
+                            {
+                                for (k = j + 1; k < react->num_species_involved; k++)
+                                {
+                                    ge_value = m_get_val(jacobian, k, j) / m_get_val(jacobian, j, j);
+                                    for (n = 0; n < react->num_species_involved; n++)
+                                    {
+                                        val_to_set = m_get_val(jacobian, k, n) - ge_value * m_get_val(jacobian, j, n);
+                                        m_set_val(jacobian, k, n, val_to_set);
+                                    }
+                                    v_set_val(b, k, v_get_val(b, k) - ge_value * v_get_val(b, j));
+                                }
+                            }
+
+                            for (j = react->num_species_involved - 1; j >= 0; j--)
+                            {
+                                v_set_val(x, j, v_get_val(b, j));
+                                for (k = j + 1; k < react->num_species_involved; k++)
+                                {
+                                    if (k != j)
+                                    {
+                                        v_set_val(x, j, v_get_val(x, j) - m_get_val(jacobian, j, k) * v_get_val(x, k));
+                                    }
+                                }
+                                v_set_val(x, j, v_get_val(x, j) / m_get_val(jacobian, j, j));
+                            }
+                            for(j = 0; j < react->num_species_involved; j++)
+                            {
+                                //I think this should be something like react->species_states[j][mc3d_indices[i]] += v_get_val(x,j);
+                                //Since the grid has a uniform discretization, the mc3d_indices should be the same length. So just need to access the correct mc3d_indices[i]
+                                //maybe do two lines?:
+                                //index = react->species_indices[j][i]
+                                //react->species_states[j][index] += v_get_val(x,j);
+                                offset_idx = i + react->mc3d_indices_offsets[j];
+                                react->species_states[j][offset_idx] += v_get_val(x,j);
+                            }                     
+                        }
+                    }
+                }
+                m_free(jacobian);
+                v_free(b);
+                v_free(x);
+                px_free(pivot);
+
+                SAFE_FREE(states_cache);
+                SAFE_FREE(states_cache_dx);
+                SAFE_FREE(params_cache);
+                SAFE_FREE(results_array);
+                SAFE_FREE(results_array_dx);
+
+                if(stop)
+                    return NULL;
+            }
         }
         else
         {

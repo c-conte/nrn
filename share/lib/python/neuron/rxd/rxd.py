@@ -108,7 +108,7 @@ set_reaction_indices.argtypes = [ctypes.c_int, _int_ptr, _int_ptr, _int_ptr,
     _int_ptr]
 
 ecs_register_reaction = nrn_dll_sym('ecs_register_reaction')
-ecs_register_reaction.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, _int_ptr, ]
+ecs_register_reaction.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, _int_ptr, numpy.ctypeslib.ndpointer(dtype=numpy.int64), ctypes.c_int,]
 
 set_hybrid_data = nrn_dll_sym('set_hybrid_data')
 set_hybrid_data.argtypes = [    
@@ -1135,6 +1135,8 @@ def _compile_reactions():
                 r._update_indices()
             react_regions = [s()._extracellular()._region for s in r._sources + r._dests if isinstance(s(),species.SpeciesOnExtracellular)] + [s()._region() for s in r._sources + r._dests if not isinstance(s(),species.SpeciesOnExtracellular)]
             react_regions +=  [sptr()._region() for sptr in sptrs if isinstance(sptr(),species.SpeciesOnRegion)]
+            react_regions += [r._regions[0]]
+            react_regions = list(set(react_regions))
         #if regions are specified - use those
         elif hasattr(r,'_active_regions'):
             react_regions = r._active_regions
@@ -1217,17 +1219,27 @@ def _compile_reactions():
 
     regions_inv_1d = [reg for reg in regions_inv if reg._secs1d]
     regions_inv_1d.sort(key=lambda r: r._id)
-    regions_inv_3d = [reg for reg in regions_inv if reg._secs3d]
+    all_regions_inv_3d = [reg for reg in regions_inv if reg._secs3d]
     #remove extra regions from multicompartment reactions. We only want the membrane
+    regions_inv_3d = set()
+    for reg in all_regions_inv_3d:
+        for rptr in regions_inv[reg]:
+            r = rptr()
+            if isinstance(r, multiCompartmentReaction.MultiCompartmentReaction):
+                regions_inv_3d.add(r._regions[0])
+            else:
+                regions_inv_3d.add(reg)
+    regions_inv_3d = list(regions_inv_3d)
 
     for reg in regions_inv_1d:
         rptr = weakref.ref(reg)
-        for c_region in region._c_region_lookup[rptr]:
-            for react in regions_inv[reg]:
-                c_region.add_reaction(react, rptr)
-                c_region.add_species(species_by_region[reg])
-                if reg in ecs_species_by_region:
-                    c_region.add_ecs_species(ecs_species_by_region[reg])
+        if rptr in region._c_region_lookup:
+            for c_region in region._c_region_lookup[rptr]:
+                for react in regions_inv[reg]:
+                    c_region.add_reaction(react, rptr)
+                    c_region.add_species(species_by_region[reg])
+                    if reg in ecs_species_by_region:
+                        c_region.add_ecs_species(ecs_species_by_region[reg])
 
     # now setup the reactions
     setup_solver(_node_get_states(), len(_node_get_states()), _zero_volume_indices, len(_zero_volume_indices), h._ref_t, h._ref_dt)
@@ -1326,7 +1338,6 @@ def _compile_reactions():
                             species_ids_used[idx][region_id] = True
                             fxn_string += "\n\trhs[%d][%d] %s (%g) * rate;" % (idx, region_id, operator, summed_mults[idx])
             fxn_string += "\n}\n"
-            print(fxn_string)
             register_rate(creg.num_species, creg.num_params, creg.num_regions,
                           creg.num_segments, creg.get_state_index(),
                           creg.num_ecs_species, creg.num_ecs_params,
@@ -1375,6 +1386,13 @@ def _compile_reactions():
                         all_ics_gids.add(sp._grid_id)
             all_ics_gids = list(all_ics_gids)
             ics_param_gids = list(ics_param_gids)
+            if any([isinstance(rptr(), multiCompartmentReaction.MultiCompartmentReaction) for rptr in regions_inv[reg]]):
+                #the elements in each list contain the indices into the states vector for the intracellular instance that need to be updated
+                mc3d_region_size = len(reg._xs)
+                mc3d_indices_start = [species._defined_species_by_gid[index]._mc3d_indices_start(reg) for index in all_ics_gids + ics_param_gids]
+            else:
+                mc3d_region_size = 0
+                mc3d_indices_start = [0 for i in range(len(all_ics_gids + ics_param_gids))]
             for rptr in regions_inv[reg]:
                 r = rptr()
                 if reg not in r._rate:
@@ -1399,19 +1417,30 @@ def _compile_reactions():
                     fxn_string += "\n\trhs[%d] %s %s;" % (pid, operator, rate_str)
                 elif isinstance(r, multiCompartmentReaction.MultiCompartmentReaction):
                     if reg in r._regions:
-                        fxn_string += 'rate = ' + rate_str + ";\n"
-                        for sptr in r._sources + r._dests:
+                        fxn_string += '\n\trate = ' + rate_str + ";"
+                        for sptr in r._sources:
                             s = sptr()
                             if not isinstance(s, species.Parameter) and not isinstance(s, species.ParameterOnRegion):
-                                s = s.instance3d
-                                if s._grid_id in ics_grid_ids:
+                                s3d = s.instance3d
+                                if s3d._grid_id in ics_grid_ids:
                                     operator = '+='
                                 else:
                                     operator = '='
-                                    ics_grid_ids.append(s._grid_id)
-                                pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s._grid_id][0]
-                                fxn_string += "\n\trhs[%d] %s rate;" % (pid, operator)
-
+                                    ics_grid_ids.append(s3d._grid_id)
+                                pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s3d._grid_id][0]
+                                fxn_string += "\n\trhs[%d] %s (-0.000005) * rate;" % (pid, operator)
+                        for sptr in r._dests:
+                            s = sptr()
+                            if not isinstance(s, species.Parameter) and not isinstance(s, species.ParameterOnRegion):
+                                s3d = s.instance3d
+                                if s3d._grid_id in ics_grid_ids:
+                                    operator = '+='
+                                else:
+                                    operator = '='
+                                    ics_grid_ids.append(s3d._grid_id)
+                                pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s3d._grid_id][0]
+                                fxn_string += "\n\trhs[%d] %s (0.000005) * rate;" % (pid, operator)                        
+                                
                 else:
                     idx=0
                     fxn_string += "\n\trate = %s;" %  rate_str
@@ -1437,8 +1466,7 @@ def _compile_reactions():
                         fxn_string += "\n\trhs[%d] %s (%s)*rate;" % (pid, operator, r._mult[idx])
                         idx += 1
             fxn_string += "\n}\n"
-            print(fxn_string)
-            ecs_register_reaction(0, len(all_ics_gids), len(ics_param_gids), _list_to_cint_array(all_ics_gids + ics_param_gids), _c_compile(fxn_string))                 
+            ecs_register_reaction(0, len(all_ics_gids), len(ics_param_gids), _list_to_cint_array(all_ics_gids + ics_param_gids), numpy.asarray(mc3d_indices_start), mc3d_region_size, _c_compile(fxn_string))               
     #Setup extracellular reactions
     if len(ecs_regions_inv) > 0:
         for reg in ecs_regions_inv:

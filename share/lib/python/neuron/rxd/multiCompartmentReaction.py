@@ -93,11 +93,9 @@ class MultiCompartmentReaction(GeneralizedReaction):
         if initializer.is_initialized():
             self._do_init()
             self._update_indices()
-        print("finished __init__ for multicompartment reaction")
 
         
     def _do_init(self):
-        print("in _update_rates")
         self._update_rates()
 
 

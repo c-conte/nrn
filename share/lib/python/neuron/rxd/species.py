@@ -82,6 +82,7 @@ _delete_by_id.argtypes = [ctypes.c_int]
 _all_species = []
 _defined_species = {}
 _all_defined_species = []
+_defined_species_by_gid = []
 def _get_all_species():
     return _all_defined_species
 
@@ -335,6 +336,8 @@ class SpeciesOnExtracellular(_SpeciesMathable):
     def d(self, value):
         self._extracellular().d = value
 
+    def defined_on_region(self, r):
+        return r == self._extracellular()
 
 
 class SpeciesOnRegion(_SpeciesMathable):
@@ -463,7 +466,7 @@ class SpeciesOnRegion(_SpeciesMathable):
         if r in sp._intracellular_instances:
             return sp._intracellular_instances[r]
         else:
-            raise RxDException("There are no 3D species defined on {}".format(reg))
+            raise RxDException("There are no 3D species defined on {}".format(r))
         
 
     @property
@@ -546,6 +549,7 @@ class _IntracellularSpecies(_SpeciesMathable):
                                     self._d, self._dx, is_diffusable, self._atolscale)
   
         self._update_pointers()
+        _defined_species_by_gid.append(self)
     
     #Line Definitions for each direction
     def line_defs(self, nodes, direction, nodes_length):
@@ -677,6 +681,24 @@ class _IntracellularSpecies(_SpeciesMathable):
             self._d = value
             set_diffusion(0, self._grid_id, value, value, value)
 
+    #TODO Can we do this better?
+    def _index_from_point(self, point):
+        for i, n in enumerate(self._nodes):
+            if point == (n._i, n._j, n._k):
+                return i
+    
+    #TODO Can I do this better?
+    def _mc3d_indices_start(self, r):
+        indices = []
+        for sec in r._secs3d:
+            for seg in sec:
+                first_index = r._nodes_by_seg[seg][0]
+                point = r._points[first_index]
+                indices.append(self._index_from_point(point))
+        return min(indices)
+
+
+
 class _ExtracellularSpecies(_SpeciesMathable):
     def __init__(self, region, d=0, name=None, charge=0, initial=0, atolscale=1.0, boundary_conditions=None):
         """
@@ -750,6 +772,8 @@ class _ExtracellularSpecies(_SpeciesMathable):
         self._ion_register()
 
         self._update_pointers()
+
+        _defined_species_by_gid.append(self)
 
     def __del__(self):
         # TODO: remove this object from the list of grids, possibly by reinserting all the others
