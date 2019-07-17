@@ -18,6 +18,9 @@ import itertools
 from numpy.ctypeslib import ndpointer
 import re
 import platform
+
+molecules_per_mM_um3 = 602214.129
+
 # aliases to avoid repeatedly doing multiple hash-table lookups
 _numpy_array = numpy.array
 _numpy_zeros = numpy.zeros
@@ -108,7 +111,7 @@ set_reaction_indices.argtypes = [ctypes.c_int, _int_ptr, _int_ptr, _int_ptr,
     _int_ptr]
 
 ecs_register_reaction = nrn_dll_sym('ecs_register_reaction')
-ecs_register_reaction.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, _int_ptr, numpy.ctypeslib.ndpointer(dtype=numpy.int64), ctypes.c_int,]
+ecs_register_reaction.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, _int_ptr, numpy.ctypeslib.ndpointer(dtype=numpy.int64), ctypes.c_int, numpy.ctypeslib.ndpointer(dtype=numpy.float),]
 
 set_hybrid_data = nrn_dll_sym('set_hybrid_data')
 set_hybrid_data.argtypes = [    
@@ -1354,7 +1357,7 @@ def _compile_reactions():
             all_ics_gids = set()
             ics_param_gids = set()
             fxn_string = _c_headers
-            fxn_string += 'void reaction(double* species_3d, double* params_3d, double*rhs)\n{'
+            fxn_string += 'void reaction(double* species_3d, double* params_3d, double*rhs, double* mc3d_mults)\n{'
             for rptr in [r for rlist in list(regions_inv.values()) for r in rlist]:
                 if not isinstance(rptr(), rate.Rate):
                     fxn_string += '\n\tdouble rate;\n'
@@ -1393,6 +1396,7 @@ def _compile_reactions():
             else:
                 mc3d_region_size = 0
                 mc3d_indices_start = [0 for i in range(len(all_ics_gids + ics_param_gids))]
+            mults = [[] for i in range(len(all_ics_gids + ics_param_gids))]
             for rptr in regions_inv[reg]:
                 r = rptr()
                 if reg not in r._rate:
@@ -1417,29 +1421,50 @@ def _compile_reactions():
                     fxn_string += "\n\trhs[%d] %s %s;" % (pid, operator, rate_str)
                 elif isinstance(r, multiCompartmentReaction.MultiCompartmentReaction):
                     if reg in r._regions:
+                        from . import geometry
                         fxn_string += '\n\trate = ' + rate_str + ";"
                         for sptr in r._sources:
                             s = sptr()
                             if not isinstance(s, species.Parameter) and not isinstance(s, species.ParameterOnRegion):
                                 s3d = s.instance3d
+                                print(s3d._grid_id)
                                 if s3d._grid_id in ics_grid_ids:
                                     operator = '+='
                                 else:
                                     operator = '='
                                     ics_grid_ids.append(s3d._grid_id)
+                                    #Find mult for this grid
+                                    for sec in reg._secs3d:
+                                        sa1d = reg.geometry.volumes1d(sec)
+                                        s3d_reg = s3d._region
+                                        nodes = len(reg._xs) / sec.nseg
+                                        for i, seg in enumerate(sec):
+                                            for index in reg._nodes_by_seg[seg]:
+                                                #Change this to be by volume
+                                                mults[s3d._grid_id].append(sa1d[i]  / (s3d_reg._geometry._volume_fraction * s3d._dx**3) / molecules_per_mM_um3)
                                 pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s3d._grid_id][0]
-                                fxn_string += "\n\trhs[%d] %s (-0.000005) * rate;" % (pid, operator)
+                                fxn_string += "\n\trhs[%d] %s -mc3d_mults[%d] * rate;" % (pid, operator, pid)
                         for sptr in r._dests:
                             s = sptr()
                             if not isinstance(s, species.Parameter) and not isinstance(s, species.ParameterOnRegion):
                                 s3d = s.instance3d
+                                print(s3d._grid_id)
                                 if s3d._grid_id in ics_grid_ids:
                                     operator = '+='
                                 else:
                                     operator = '='
                                     ics_grid_ids.append(s3d._grid_id)
+                                    #Find mult for this grid
+                                    for sec in reg._secs3d:
+                                        sa1d = geometry._make_surfacearea1d_function(reg.geometry._area_per_vol)(sec)
+                                        s3d_reg = s3d._region
+                                        nodes = len(reg._xs) / sec.nseg                                        
+                                        for i, seg in enumerate(sec):
+                                            for index in reg._nodes_by_seg[seg]:
+                                                #Change this to be by volume
+                                                mults[s3d._grid_id].append((sa1d[i] / nodes)  / (s3d_reg._geometry._volume_fraction * s3d._dx**3) / molecules_per_mM_um3)
                                 pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s3d._grid_id][0]
-                                fxn_string += "\n\trhs[%d] %s (0.000005) * rate;" % (pid, operator)                        
+                                fxn_string += "\n\trhs[%d] %s mc3d_mults[%d] * rate;" % (pid, operator, pid)                        
                                 
                 else:
                     idx=0
@@ -1466,7 +1491,12 @@ def _compile_reactions():
                         fxn_string += "\n\trhs[%d] %s (%s)*rate;" % (pid, operator, r._mult[idx])
                         idx += 1
             fxn_string += "\n}\n"
-            ecs_register_reaction(0, len(all_ics_gids), len(ics_param_gids), _list_to_cint_array(all_ics_gids + ics_param_gids), numpy.asarray(mc3d_indices_start), mc3d_region_size, _c_compile(fxn_string))               
+            for i, ele in enumerate(mults):
+                if ele == []:
+                    mults[i] = numpy.ones(len(reg._xs))
+            mults = list(itertools.chain.from_iterable(mults))
+            print(fxn_string)
+            ecs_register_reaction(0, len(all_ics_gids), len(ics_param_gids), _list_to_cint_array(all_ics_gids + ics_param_gids), numpy.asarray(mc3d_indices_start), mc3d_region_size, numpy.asarray(mults), _c_compile(fxn_string))               
     #Setup extracellular reactions
     if len(ecs_regions_inv) > 0:
         for reg in ecs_regions_inv:

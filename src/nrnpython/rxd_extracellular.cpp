@@ -99,7 +99,7 @@ void clear_rates_ecs(void)
  * subregion - either NULL or a boolean array the same size as the grid
  * 	indicating if reaction occurs at a specific voxel
  */
-Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int* species_ids, ECSReactionRate f, unsigned char* subregion, int* mc3d_start_indices, int mc3d_region_size)
+Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int* species_ids, ECSReactionRate f, unsigned char* subregion, int* mc3d_start_indices, int mc3d_region_size, double* mc3d_mults)
 {
 	Grid_node *grid;
 	Reaction* r;
@@ -121,9 +121,20 @@ Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int
             {
                 r->subregion = NULL;
                 r->region_size = mc3d_region_size;
-                //Do we really need to allocate a whole Grid_node* here?
                 r->mc3d_indices_offsets = (int*)malloc(sizeof(int*)*(num_species+num_params));
-                memcpy(r->mc3d_indices_offsets, mc3d_start_indices, sizeof(double)*(num_species+num_params));          
+                memcpy(r->mc3d_indices_offsets, mc3d_start_indices, sizeof(double)*(num_species+num_params));
+                r->mc3d_mults = (double**)malloc(sizeof(double*)*(num_species + num_params));
+                int mult_idx = 0;
+                for(int row = 0; row < num_species + num_params; row++)
+                {
+                    r->mc3d_mults[row] = (double*)malloc(sizeof(double)*mc3d_region_size);
+                    for(int c = 0; c < mc3d_region_size; c++, mult_idx++)
+                    {
+                        r->mc3d_mults[row][c] = mc3d_mults[mult_idx];
+                    }
+                }
+                
+
             }
 			else if(subregion == NULL)
 			{
@@ -167,10 +178,10 @@ Reaction* ecs_create_reaction(int list_idx, int num_species, int num_params, int
  * grid_id - the grid id within the linked list - this corresponds to species
  * ECSReactionRate - the reaction function
  */
-extern "C" void ecs_register_reaction(int list_idx, int num_species, int num_params, int* species_id, int* mc3d_start_indices, int mc3d_region_size, ECSReactionRate f)
+extern "C" void ecs_register_reaction(int list_idx, int num_species, int num_params, int* species_id, int* mc3d_start_indices, int mc3d_region_size, double* mc3d_mults, ECSReactionRate f)
 {
     printf("mc3d_region_size = %d\n", mc3d_region_size);
-	ecs_create_reaction(list_idx, num_species, num_params, species_id, f, NULL, mc3d_start_indices, mc3d_region_size);
+	ecs_create_reaction(list_idx, num_species, num_params, species_id, f, NULL, mc3d_start_indices, mc3d_region_size, mc3d_mults);
 	ecs_refresh_reactions(NUM_THREADS);
 }
 
@@ -184,7 +195,7 @@ extern "C" void ecs_register_reaction(int list_idx, int num_species, int num_par
  */
 void ecs_register_subregion_reaction_ecs(int list_idx, int num_species, int num_params, int* species_id, unsigned char* my_subregion, ECSReactionRate f)
 {
-	ecs_create_reaction(list_idx, num_species, num_params, species_id, f,  my_subregion, NULL, 0);
+	ecs_create_reaction(list_idx, num_species, num_params, species_id, f,  my_subregion, NULL, 0, NULL);
 	ecs_refresh_reactions(NUM_THREADS);
 }
 
@@ -264,6 +275,7 @@ void* ecs_do_reactions(void* dataptr)
     double* states_cache_dx = NULL;
 	double* results_array = NULL;
 	double* results_array_dx = NULL;
+    double* mc_mults_array = NULL;
     double dx = FLT_EPSILON;
 	double pd;
 	MAT *jacobian;
@@ -276,7 +288,6 @@ void* ecs_do_reactions(void* dataptr)
         //TODO: This is bad. Need to refactor
         if (react->mc3d_indices_offsets != NULL)
         {
-            //do below code but grabbing the correct indices is there a better way to do this? Could make them into classes but might be more trouble than it's worth
             /*find start location for this thread*/
             if(started || react == task.onset->reaction)
             {
@@ -312,6 +323,7 @@ void* ecs_do_reactions(void* dataptr)
                 states_cache_dx = (double*)malloc(sizeof(double)*react->num_species_involved);
                 results_array = (double*)malloc(react->num_species_involved*sizeof(double));
                 results_array_dx = (double*)malloc(react->num_species_involved*sizeof(double));
+                mc_mults_array = (double*)malloc(react->num_species_involved*sizeof(double));
                 for(i = start_idx; i <= stop_idx; i++)
                 {
                     if(!react->subregion || react->subregion[i])
@@ -323,20 +335,22 @@ void* ecs_do_reactions(void* dataptr)
                             offset_idx = i + react->mc3d_indices_offsets[j];
                             states_cache[j] = react->species_states[j][offset_idx];
                             states_cache_dx[j] = react->species_states[j][offset_idx];
+                            mc_mults_array[j] = react->mc3d_mults[j][i];
                         }
                         MEM_ZERO(results_array,react->num_species_involved*sizeof(double));
                         for(k = 0; j < react->num_species_involved + react->num_params_involved; k++, j++)
                         {
                             offset_idx = i + react->mc3d_indices_offsets[j];
                             params_cache[k] = react->species_states[j][offset_idx];
+                            mc_mults_array[k] = react->mc3d_mults[j][i];
                         }
-                        react->reaction(states_cache, params_cache, results_array);
+                        react->reaction(states_cache, params_cache, results_array, mc_mults_array);
 
                         for(j = 0; j < react->num_species_involved; j++)
                         {
                             states_cache_dx[j] += dx;
                             MEM_ZERO(results_array_dx,react->num_species_involved*sizeof(double));
-                            react->reaction(states_cache_dx, params_cache, results_array_dx);
+                            react->reaction(states_cache_dx, params_cache, results_array_dx, mc_mults_array);
                             v_set_val(b, j, dt*results_array[j]);
 
                             for(k = 0; k < react->num_species_involved; k++)
@@ -420,6 +434,7 @@ void* ecs_do_reactions(void* dataptr)
                 SAFE_FREE(params_cache);
                 SAFE_FREE(results_array);
                 SAFE_FREE(results_array_dx);
+                SAFE_FREE(mc_mults_array);
 
                 if(stop)
                     return NULL;
@@ -478,13 +493,13 @@ void* ecs_do_reactions(void* dataptr)
                         {
                             params_cache[k] = react->species_states[j][i];
                         }
-                        react->reaction(states_cache, params_cache, results_array);
+                        react->reaction(states_cache, params_cache, results_array, NULL);
 
                         for(j = 0; j < react->num_species_involved; j++)
                         {
                             states_cache_dx[j] += dx;
                             MEM_ZERO(results_array_dx,react->num_species_involved*sizeof(double));
-                            react->reaction(states_cache_dx, params_cache, results_array_dx);
+                            react->reaction(states_cache_dx, params_cache, results_array_dx, NULL);
                             v_set_val(b, j, dt*results_array[j]);
 
                             for(k = 0; k < react->num_species_involved; k++)

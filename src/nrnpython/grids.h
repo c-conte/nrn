@@ -82,7 +82,7 @@ typedef struct {
 } Current_Triple;
 
 typedef void (*ReactionRate)(double**, double**, double**, double*, double*, double*, double*, double**, double);
-typedef void (*ECSReactionRate)(double*, double*, double*);
+typedef void (*ECSReactionRate)(double*, double*, double*, double*);
 typedef struct Reaction {
 	struct Reaction* next;
 	ECSReactionRate reaction;
@@ -92,6 +92,7 @@ typedef struct Reaction {
 	unsigned char* subregion;
 	unsigned int region_size;
     int* mc3d_indices_offsets;
+    double** mc3d_mults;
 } Reaction;
 
 typedef struct {
