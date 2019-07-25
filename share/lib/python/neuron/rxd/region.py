@@ -362,8 +362,8 @@ class Region(object):
 
             self._sa = numpy.array([val[1] for val in surface_voxels.values()] + [0 for val in internal_voxels.values()])
             #TODO: Use Fractional Volumes with diffusion
-            #self._vol = numpy.array([val[0] for val in surface_voxels.values()] + [val[0] for val in internal_voxels.values()])
-            self._vol = dx ** 3 * numpy.ones(len(surface_voxels) + len(internal_voxels))
+            self._vol = numpy.array([val[0] for val in surface_voxels.values()] + [val[0] for val in internal_voxels.values()])
+            #self._vol = dx ** 3 * numpy.ones(len(surface_voxels) + len(internal_voxels))
             self._mesh_grid = mesh_grid
 
             self._points = [key for key in surface_voxels.keys()] + [key for key in internal_voxels.keys()]

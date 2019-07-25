@@ -191,7 +191,13 @@ class DistributedBoundary(RxDGeometry):
         #volumes._values *= self._area_per_vol # volume on 2D boundaries is actually the area; the amount of space for holding things
         #surface_areas._values *= 0 
         #return mesh, surface_areas, volumes, triangles
-        return geometry3d.voxelize2(source, dx=dx)
+        internal_voxels, surface_voxels, mesh_grid = geometry3d.voxelize2(source, dx=dx)
+        area_per_vol = self._area_per_vol
+        for key in internal_voxels:
+            internal_voxels[key][0] *= area_per_vol
+        for key in surface_voxels:
+            surface_voxels[key][0] *= area_per_vol
+        return internal_voxels, surface_voxels, mesh_grid
     
     def __repr__(self):
         if self._perim_per_area == 0:
@@ -228,7 +234,13 @@ class FractionalVolume(RxDGeometry):
         #surface_areas._values *= self._surface_fraction
         #volumes._values *= self._volume_fraction
         #return mesh, surface_areas, volumes, triangles
-        return geometry3d.voxelize2(source, dx=dx)
+        internal_voxels, surface_voxels, mesh_grid = geometry3d.voxelize2(source, dx=dx)
+        volume_fraction = self._volume_fraction
+        for key in internal_voxels:
+            internal_voxels[key][0] *= volume_fraction
+        for key in surface_voxels:
+            surface_voxels[key][0] *= volume_fraction
+        return internal_voxels, surface_voxels, mesh_grid
     
     def __repr__(self):
         return 'FractionalVolume(volume_fraction=%r, surface_fraction=%r, neighbor_areas_fraction=%r)' % (self._volume_fraction, self._surface_fraction, self._neighbor_areas_fraction)

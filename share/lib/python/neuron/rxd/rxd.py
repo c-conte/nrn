@@ -1341,6 +1341,7 @@ def _compile_reactions():
                             species_ids_used[idx][region_id] = True
                             fxn_string += "\n\trhs[%d][%d] %s (%g) * rate;" % (idx, region_id, operator, summed_mults[idx])
             fxn_string += "\n}\n"
+            print("mults = ",mc_mult_list)
             register_rate(creg.num_species, creg.num_params, creg.num_regions,
                           creg.num_segments, creg.get_state_index(),
                           creg.num_ecs_species, creg.num_ecs_params,
@@ -1435,13 +1436,13 @@ def _compile_reactions():
                                     ics_grid_ids.append(s3d._grid_id)
                                     #Find mult for this grid
                                     for sec in reg._secs3d:
-                                        sa1d = reg.geometry.volumes1d(sec)
+                                        sas = reg._vol
                                         s3d_reg = s3d._region
-                                        nodes = len(reg._xs) / sec.nseg
-                                        for i, seg in enumerate(sec):
+                                        for seg in sec:
                                             for index in reg._nodes_by_seg[seg]:
                                                 #Change this to be by volume
-                                                mults[s3d._grid_id].append(sa1d[i]  / (s3d_reg._geometry._volume_fraction * s3d._dx**3) / molecules_per_mM_um3)
+                                                #membrane area / compartment volume / molecules_per_mM_um3
+                                                mults[s3d._grid_id].append(sas[index] / (s3d._region._vol[index]) / molecules_per_mM_um3)
                                 pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s3d._grid_id][0]
                                 fxn_string += "\n\trhs[%d] %s -mc3d_mults[%d] * rate;" % (pid, operator, pid)
                         for sptr in r._dests:
@@ -1456,13 +1457,12 @@ def _compile_reactions():
                                     ics_grid_ids.append(s3d._grid_id)
                                     #Find mult for this grid
                                     for sec in reg._secs3d:
-                                        sa1d = geometry._make_surfacearea1d_function(reg.geometry._area_per_vol)(sec)
-                                        s3d_reg = s3d._region
-                                        nodes = len(reg._xs) / sec.nseg                                        
-                                        for i, seg in enumerate(sec):
+                                        sas = reg._vol
+                                        s3d_reg = s3d._region                                      
+                                        for seg in sec:
                                             for index in reg._nodes_by_seg[seg]:
                                                 #Change this to be by volume
-                                                mults[s3d._grid_id].append((sa1d[i] / nodes)  / (s3d_reg._geometry._volume_fraction * s3d._dx**3) / molecules_per_mM_um3)
+                                                mults[s3d._grid_id].append(sas[index] / (s3d._region._vol[index]) / molecules_per_mM_um3)
                                 pid = [pid for pid,gid in enumerate(all_ics_gids) if gid == s3d._grid_id][0]
                                 fxn_string += "\n\trhs[%d] %s mc3d_mults[%d] * rate;" % (pid, operator, pid)                        
                                 
@@ -1495,6 +1495,7 @@ def _compile_reactions():
                 if ele == []:
                     mults[i] = numpy.ones(len(reg._xs))
             mults = list(itertools.chain.from_iterable(mults))
+            print()
             print(fxn_string)
             ecs_register_reaction(0, len(all_ics_gids), len(ics_param_gids), _list_to_cint_array(all_ics_gids + ics_param_gids), numpy.asarray(mc3d_indices_start), mc3d_region_size, numpy.asarray(mults), _c_compile(fxn_string))               
     #Setup extracellular reactions

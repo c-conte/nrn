@@ -432,7 +432,12 @@ class SpeciesOnRegion(_SpeciesMathable):
             rxd._update_node_data()
         else:
             initializer._do_init()
-        return nodelist.NodeList(itertools.chain.from_iterable([s.nodes for s in self._species()._secs if s._region == self._region()]))
+        my_nodes = [s.nodes for s in self._species()._secs if s._region == self._region()]
+        try:
+            my_nodes.append(self.instance3d._nodes)
+        except:
+            pass
+        return nodelist.NodeList(itertools.chain.from_iterable(my_nodes))
     
     @property
     def concentration(self):
